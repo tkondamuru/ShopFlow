@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Node modules
+node_modules/
+
+# Logs
+*.log
+
+# React Native
+android/app/build/
+ios/Pods/
+ios/build/
+build/
+coverage/
+
+# dotenv files
+.env
+.env.*.local
