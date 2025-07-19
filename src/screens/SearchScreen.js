@@ -1,4 +1,4 @@
-import React, { useContext, useState, useEffect, useRef } from 'react';
+import React, { useRef } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,16 @@ import {
   Animated,
   TouchableWithoutFeedback,
   FlatList,
+  Dimensions,
+  Image,
 } from 'react-native';
-import { CustomerContext } from '../store/CustomerContext';
-import Layout from '../components/Layout';
-import ShopSelectorModal from '../components/ShopSelectorModal';
+import { useNavigation } from '@react-navigation/native';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+// If you have BootstrapIcons, import them instead
+// import BootstrapIcons from 'react-native-vector-icons/BootstrapIcons';
 
+const AD_IMAGE = 'https://azudevelopstorage.blob.core.windows.net/buysite-notifications/PartTopRight.png';
+const HEADER_HEIGHT = 70;
 const ICON_COLOR = '#4AC9E3';
 
 const SEARCH_OPTIONS = [
@@ -19,7 +23,7 @@ const SEARCH_OPTIONS = [
     key: 'partSearch',
     title: 'Part Search',
     subtitle: 'Auto parts, sundry, dealer part search',
-    icon: 'magnify',
+    icon: 'magnify', // fallback to MaterialCommunityIcons
   },
   {
     key: 'mmySearch',
@@ -53,21 +57,31 @@ const SEARCH_OPTIONS = [
   },
 ];
 
-const HomeScreen = ({ navigation }) => {
-  const { selectedShop } = useContext(CustomerContext);
-  const [shopModalVisible, setShopModalVisible] = useState(false);
+const SearchScreen = () => {
+  const navigation = useNavigation();
+  const scrollY = useRef(new Animated.Value(0)).current;
   const animScales = useRef(SEARCH_OPTIONS.map(() => new Animated.Value(1))).current;
 
-  useEffect(() => {
-    if (!selectedShop) setShopModalVisible(true);
-  }, [selectedShop]);
-
-  const handleOpenShopModal = () => setShopModalVisible(true);
-
-  const handleBottomNavPress = (route) => {
-    if (route !== 'Home') {
-      navigation.navigate(route);
-    }
+  const renderHeader = () => {
+    const opacity = scrollY.interpolate({
+      inputRange: [0, HEADER_HEIGHT / 2, HEADER_HEIGHT],
+      outputRange: [1, 0.7, 0],
+      extrapolate: 'clamp',
+    });
+    const translateY = scrollY.interpolate({
+      inputRange: [0, HEADER_HEIGHT],
+      outputRange: [0, -HEADER_HEIGHT / 3],
+      extrapolate: 'clamp',
+    });
+    return (
+      <Animated.View style={[styles.header, { opacity, transform: [{ translateY }] }]}>
+        <Image
+          source={{ uri: AD_IMAGE }}
+          style={styles.headerImage}
+          resizeMode="cover"
+        />
+      </Animated.View>
+    );
   };
 
   const handlePress = (idx, key) => {
@@ -83,6 +97,7 @@ const HomeScreen = ({ navigation }) => {
         friction: 3,
         tension: 100,
       }).start();
+      // Navigate to the respective search flow
       navigation.navigate(key);
     });
   };
@@ -107,31 +122,41 @@ const HomeScreen = ({ navigation }) => {
   );
 
   return (
-    <Layout 
-      navigation={navigation} 
-      onOpenShopModal={handleOpenShopModal}
-      currentRoute="Home"
-      onBottomNavPress={handleBottomNavPress}
-    >
-      <FlatList
+    <View style={styles.container}>
+      <Animated.FlatList
         data={SEARCH_OPTIONS}
         keyExtractor={item => item.key}
         renderItem={renderItem}
+        ListHeaderComponent={renderHeader}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true }
+        )}
       />
-      <ShopSelectorModal
-        visible={shopModalVisible}
-        onDismiss={() => setShopModalVisible(false)}
-      />
-    </Layout>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  header: {
+    width: '100%',
+    height: HEADER_HEIGHT,
+    overflow: 'hidden',
+    backgroundColor: '#fff',
+  },
+  headerImage: {
+   
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+  },
   listContent: {
     paddingBottom: 32,
-    paddingTop: 16,
   },
   listItem: {
     flexDirection: 'row',
@@ -140,7 +165,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginHorizontal: 16,
     marginVertical: 8,
-    padding: 16,
+    padding: 20,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -168,10 +193,8 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    fontWeight: '400',
-    lineHeight: 20,
-    color: '#525046',
+    color: '#4AC9E3',
   },
 });
 
-export default HomeScreen;
+export default SearchScreen; 
