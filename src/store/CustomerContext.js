@@ -151,6 +151,17 @@ export const CustomerProvider = ({ children }) => {
     await SecureStore.deleteItemAsync(SELECTED_SHOP_KEY);
   };
 
+  // Common shop selection routine that clears all state and navigates to home
+  const selectShopAndNavigateHome = async (shop, navigation) => {
+    // Update selected shop
+    await updateSelectedShop(shop);
+    
+    // Navigate to home
+    if (navigation) {
+      navigation.navigate('Home');
+    }
+  };
+
   // Update selected shop and persist
   const updateSelectedShop = async (shop) => {
     setSelectedShop(shop);
@@ -234,7 +245,8 @@ export const CustomerProvider = ({ children }) => {
       customer, setCustomer, jwt, login, logout, tryAutoLogin, loading,
       items, setItems, shops, setShops, selectedShop, setSelectedShop,
       fetchAndStoreShops, updateSelectedShop, updateShops, clearShops, persistSelectedShop,
-      cancelledOrders, addCancelledOrder, isItemCancelled, clearCancelledOrders
+      cancelledOrders, addCancelledOrder, isItemCancelled, clearCancelledOrders,
+      selectShopAndNavigateHome
     }}>
       {children}
     </CustomerContext.Provider>

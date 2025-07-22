@@ -1,15 +1,18 @@
-import React, { useContext, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Alert } from 'react-native';
-import { Card, Button, List, Divider, IconButton, TextInput, Surface, HelperText, Snackbar } from 'react-native-paper';
+import React, { useState, useContext, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity } from 'react-native';
+import { Card, Button, List, Divider, Chip, TextInput } from 'react-native-paper';
 import { MaterialIcons } from '@expo/vector-icons';
 import { CustomerContext } from '../store/CustomerContext';
 import Layout from '../components/Layout';
 import ShopSelectorModal from '../components/ShopSelectorModal';
+import ChangePasswordModal from '../components/ChangePasswordModal';
+import EmailSettingsModal from '../components/EmailSettingsModal';
+import SecurityQuestionsModal from '../components/SecurityQuestionsModal';
 import FormattedTextModal from '../components/FormattedTextModal';
 import ProfileRepository from '../services/ProfileRepository';
 
 const ProfileScreen = ({ navigation }) => {
-  const { customer, logout, updateSelectedShop, selectedShop } = useContext(CustomerContext);
+  const { customer, logout, updateSelectedShop, selectedShop, selectShopAndNavigateHome } = useContext(CustomerContext);
   const [shopModalVisible, setShopModalVisible] = useState(false);
   const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
   const [termsModalVisible, setTermsModalVisible] = useState(false);
@@ -78,9 +81,8 @@ The materials appearing on PGW Buysite's website could include technical, typogr
 
   // Handler for shop selection
   const handleShopSelect = async (shop) => {
-    await updateSelectedShop(shop);
+    await selectShopAndNavigateHome(shop, navigation);
     setShopModalVisible(false);
-    navigation.navigate('Home');
   };
 
   const handleLogout = () => {

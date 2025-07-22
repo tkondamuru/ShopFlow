@@ -1,12 +1,12 @@
-import React, { useContext, useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import { Card, Button, Divider, IconButton } from 'react-native-paper';
+import { Card, Button, IconButton, Divider } from 'react-native-paper';
 import { CustomerContext } from '../store/CustomerContext';
 import Layout from '../components/Layout';
 import ShopSelectorModal from '../components/ShopSelectorModal';
 
 const CartScreen = ({ navigation }) => {
-  const { customer, items, setItems, updateSelectedShop } = useContext(CustomerContext);
+  const { customer, items, setItems, updateSelectedShop, selectShopAndNavigateHome } = useContext(CustomerContext);
   const [loading, setLoading] = useState(false);
   const [shopModalVisible, setShopModalVisible] = useState(false);
 
@@ -72,9 +72,8 @@ const CartScreen = ({ navigation }) => {
 
   // Handler for shop selection
   const handleShopSelect = async (shop) => {
-    await updateSelectedShop(shop);
+    await selectShopAndNavigateHome(shop, navigation);
     setShopModalVisible(false);
-    navigation.navigate('Home');
   };
 
   const renderCartItem = (item) => (

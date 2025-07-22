@@ -1,13 +1,20 @@
-import React, { useState, useContext, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Modal, Alert, ActivityIndicator } from 'react-native';
-import { Card, Button, List, Divider, IconButton, Chip, Searchbar } from 'react-native-paper';
+import React, { useState, useContext, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Alert, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { Card, Button, List, Divider, Chip } from 'react-native-paper';
 import { CustomerContext } from '../store/CustomerContext';
 import { useOrderContext } from '../store/OrderContext';
 import Layout from '../components/Layout';
 import ShopSelectorModal from '../components/ShopSelectorModal';
+import OrdersHeader from '../components/OrdersHeader';
+import OrdersList from '../components/OrdersList';
+import OrderHistoryList from '../components/OrderHistoryList';
+import ReturnCart from '../components/ReturnCart';
+import OrderItemModal from '../components/OrderItemModal';
+import OrderHistorySearchModal from '../components/OrderHistorySearchModal';
 import ActiveOrdersRepository from '../services/ActiveOrdersRepository';
+import OrderHistoryRepository from '../services/OrderHistoryRepository';
+import { formatPrice, formatDeparture, searchActiveOrders, searchActiveReturns, searchOrderHistory } from '../utils/ordersUtils';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
-import { format } from 'date-fns';
 
 const OrdersScreen = ({ navigation }) => {
   const { 
@@ -16,69 +23,141 @@ const OrdersScreen = ({ navigation }) => {
     selectedShop,
     addCancelledOrder,
     isItemCancelled,
-    clearCancelledOrders
+    clearCancelledOrders,
+    selectShopAndNavigateHome
   } = useContext(CustomerContext);
   const {
     currentView,
     setCurrentView,
     orderHistorySearch,
     setOrderHistorySearch,
-    clearOrderContext,
+    orderHistorySearchParams,
+    setOrderHistorySearchParams,
+    // Shop tracking
+    currentShopId,
+    checkAndClearContext,
+    // Active Orders data
+    activeOrders,
+    setActiveOrders,
+    activeOrdersLoaded,
+    setActiveOrdersLoaded,
+    // Active Returns data
+    activeReturns,
+    setActiveReturns,
+    activeReturnsLoaded,
+    setActiveReturnsLoaded,
+    // Order History data
+    orderHistory,
+    setOrderHistory,
+    orderHistoryLoaded,
+    setOrderHistoryLoaded,
   } = useOrderContext();
+  
+  // UI State
   const [shopModalVisible, setShopModalVisible] = useState(false);
-  const [activeOrders, setActiveOrders] = useState([]);
-  const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [loadingActiveOrders, setLoadingActiveOrders] = useState(false);
+  const [loadingActiveReturns, setLoadingActiveReturns] = useState(false);
+  const [loadingOrderHistory, setLoadingOrderHistory] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
   const [itemModalVisible, setItemModalVisible] = useState(false);
   const [pressedItemKey, setPressedItemKey] = useState(null);
   const [selectedGroupItems, setSelectedGroupItems] = useState([]);
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
-  const [activeReturns, setActiveReturns] = useState([]);
-  const [activeReturnsCount, setActiveReturnsCount] = useState(0);
-  const [loadingActiveReturns, setLoadingActiveReturns] = useState(false);
-  const [searchModalVisible, setSearchModalVisible] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [filteredActiveOrders, setFilteredActiveOrders] = useState([]);
-  const [filteredActiveReturns, setFilteredActiveReturns] = useState([]);
   const [isSearchMode, setIsSearchMode] = useState(false);
+  const [orderHistorySearchMode, setOrderHistorySearchMode] = useState('data');
+  const [returnCartItems, setReturnCartItems] = useState([]);
+  const [returnCartVisible, setReturnCartVisible] = useState(false);
+  const [orderHistorySearchModalVisible, setOrderHistorySearchModalVisible] = useState(false);
+  const [searchingOrderHistory, setSearchingOrderHistory] = useState(false);
 
   const activeOrdersRepo = new ActiveOrdersRepository();
+  const orderHistoryRepo = new OrderHistoryRepository();
 
-  // Fetch active orders when entering the view
-  React.useEffect(() => {
-    if (currentView === 'activeOrders') {
-      fetchActiveOrders();
+  // Check shop ID and clear context if needed
+  useEffect(() => {
+    if (selectedShop?.shipto) {
+      checkAndClearContext(selectedShop.shipto);
     }
-    // eslint-disable-next-line
-  }, [currentView, selectedShop]);
+  }, []);
 
-  // Fetch active returns when entering the view
-  React.useEffect(() => {
-    if (currentView === 'activeReturns') {
-      fetchActiveReturns();
+  // Smart data loading functions
+  const loadActiveOrders = async () => {
+    console.log(`🎯 [OrdersScreen] loadActiveOrders called:`, {
+      hasShop: !!selectedShop?.shipto,
+      shopId: selectedShop?.shipto,
+      activeOrdersLoaded,
+      activeOrdersLength: activeOrders?.length || 0,
+      currentView
+    });
+    
+    if (!selectedShop?.shipto) return;
+    
+    if (activeOrdersLoaded && activeOrders.length > 0) {
+      console.log(`📋 [OrdersScreen] Using cached active orders: ${activeOrders.length} orders`);
+      return;
     }
-    // eslint-disable-next-line
-  }, [currentView, selectedShop]);
+    
+    console.log(`📥 [OrdersScreen] Loading active orders from API...`);
+    await fetchActiveOrders();
+  };
 
-  // Clear order context when shop changes
-  React.useEffect(() => {
-    if (selectedShop) {
-      clearOrderContext();
+  const loadActiveReturns = async () => {
+    console.log(`🎯 [OrdersScreen] loadActiveReturns called:`, {
+      hasShop: !!selectedShop?.shipto,
+      shopId: selectedShop?.shipto,
+      activeReturnsLoaded,
+      activeReturnsLength: activeReturns?.length || 0,
+      currentView
+    });
+    
+    if (!selectedShop?.shipto) return;
+    
+    if (activeReturnsLoaded && activeReturns.length > 0) {
+      console.log(`📋 [OrdersScreen] Using cached active returns: ${activeReturns.length} returns`);
+      return;
     }
-  }, [selectedShop]);
+    
+    console.log(`📥 [OrdersScreen] Loading active returns from API...`);
+    await fetchActiveReturns();
+  };
 
+  const loadOrderHistory = async () => {
+    console.log(`🎯 [OrdersScreen] loadOrderHistory called:`, {
+      hasShop: !!selectedShop?.shipto,
+      shopId: selectedShop?.shipto,
+      orderHistoryLoaded,
+      orderHistoryLength: orderHistory?.length || 0,
+      currentView
+    });
+    
+    if (!selectedShop?.shipto) return;
+    
+    if (orderHistoryLoaded && orderHistory.length > 0) {
+      console.log(`📋 [OrdersScreen] Using cached order history: ${orderHistory.length} orders`);
+      return;
+    }
+    
+    console.log(`📥 [OrdersScreen] Loading order history from API...`);
+    await fetchOrderHistory();
+  };
+
+  // API fetch functions
   const fetchActiveOrders = async () => {
     if (!selectedShop?.shipto) return;
+    
+    console.log(`🔄 [OrdersScreen] Fetching active orders for shop: ${selectedShop.shipto}`);
     setLoadingActiveOrders(true);
+    
     try {
       const data = await activeOrdersRepo.getActiveOrders(selectedShop.shipto);
+      console.log(`✅ [OrdersScreen] Active orders fetched: ${data.orders?.length || 0} orders`);
       setActiveOrders(data.orders || []);
-      setActiveOrdersCount(data.count || 0);
+      setActiveOrdersLoaded(true);
     } catch (e) {
+      console.error(`❌ [OrdersScreen] Failed to fetch active orders:`, e.message);
       setActiveOrders([]);
-      setActiveOrdersCount(0);
     } finally {
       setLoadingActiveOrders(false);
       setRefreshing(false);
@@ -87,57 +166,50 @@ const OrdersScreen = ({ navigation }) => {
 
   const fetchActiveReturns = async () => {
     if (!selectedShop?.shipto) return;
+    
+    console.log(`🔄 [OrdersScreen] Fetching active returns for shop: ${selectedShop.shipto}`);
     setLoadingActiveReturns(true);
+    
     try {
       const data = await activeOrdersRepo.getActiveReturns(selectedShop.shipto);
+      console.log(`✅ [OrdersScreen] Active returns fetched: ${data.returns?.length || 0} returns`);
       setActiveReturns(data.returns || []);
-      setActiveReturnsCount(data.count || 0);
+      setActiveReturnsLoaded(true);
     } catch (e) {
+      console.error(`❌ [OrdersScreen] Failed to fetch active returns:`, e.message);
       setActiveReturns([]);
-      setActiveReturnsCount(0);
     } finally {
       setLoadingActiveReturns(false);
       setRefreshing(false);
     }
   };
 
-  // Group orders by locationNumber + shipperNumber
-  const groupActiveOrders = (orders) => {
-    const groups = {};
-    orders.forEach(item => {
-      const groupKey = `${item.locationNumber}-${item.shipperNumber}`;
-      if (!groups[groupKey]) {
-        groups[groupKey] = {
-          locationNumber: item.locationNumber,
-          shipperNumber: item.shipperNumber,
-          customerPONumber: item.customerPONumber,
-          items: [],
-        };
-      }
-      groups[groupKey].items.push(item);
-    });
-    return Object.values(groups);
+  const fetchOrderHistory = async () => {
+    if (!selectedShop?.shipto) return;
+    
+    console.log(`🔄 [OrdersScreen] Fetching order history for shop: ${selectedShop.shipto}`);
+    console.log(`📅 [OrdersScreen] Date range: ${orderHistorySearch.startDate} to ${orderHistorySearch.endDate}`);
+    setLoadingOrderHistory(true);
+    
+    try {
+      const data = await orderHistoryRepo.getOrderHistory(
+        selectedShop.shipto,
+        orderHistorySearch.startDate,
+        orderHistorySearch.endDate
+      );
+      console.log(`✅ [OrdersScreen] Order history fetched: ${data.history?.length || 0} orders`);
+      setOrderHistory(data.history || []);
+      setOrderHistoryLoaded(true);
+    } catch (e) {
+      console.error(`❌ [OrdersScreen] Failed to fetch order history:`, e.message);
+      setOrderHistory([]);
+    } finally {
+      setLoadingOrderHistory(false);
+      setRefreshing(false);
+    }
   };
 
-  // Group returns by locationNumber + shipperNumber
-  const groupActiveReturns = (returns) => {
-    const groups = {};
-    returns.forEach(item => {
-      const groupKey = `${item.locationNumber}-${item.shipperNumber}`;
-      if (!groups[groupKey]) {
-        groups[groupKey] = {
-          locationNumber: item.locationNumber,
-          shipperNumber: item.shipperNumber,
-          customerPONumber: item.customerPONumber,
-          items: [],
-        };
-      }
-      groups[groupKey].items.push(item);
-    });
-    return Object.values(groups);
-  };
-
-  // Cancel order handler (group)
+  // Order actions
   const handleCancelOrder = (group) => {
     Alert.alert(
       'Cancel Order',
@@ -153,15 +225,13 @@ const OrdersScreen = ({ navigation }) => {
               -1  // arg_part_no for group cancellation
             );
             if (response.success) {
-              // Store cancelled order in context
               await addCancelledOrder(selectedShop.shipto, {
                 locationNumber: group.locationNumber,
                 shipperNumber: group.shipperNumber,
-                itemUIDNumber: -1, // -1 indicates entire group cancelled
+                itemUIDNumber: -1,
                 partDescription: 'ENTIRE_ORDER'
               });
               Alert.alert('Success', response.message || 'Order cancelled successfully');
-              // Refresh the orders list
               fetchActiveOrders();
             } else {
               Alert.alert('Error', response.message || 'Failed to cancel order');
@@ -174,7 +244,6 @@ const OrdersScreen = ({ navigation }) => {
     );
   };
 
-  // Delete item handler
   const handleDeleteItem = (item) => {
     Alert.alert(
       'Delete Item',
@@ -190,7 +259,6 @@ const OrdersScreen = ({ navigation }) => {
               item.partDescription
             );
             if (response.success) {
-              // Store cancelled item in context
               await addCancelledOrder(selectedShop.shipto, {
                 locationNumber: item.locationNumber,
                 shipperNumber: item.shipperNumber,
@@ -198,7 +266,6 @@ const OrdersScreen = ({ navigation }) => {
                 partDescription: item.partDescription
               });
               Alert.alert('Success', response.message || 'Item deleted successfully');
-              // Close modal and refresh the orders list
               setItemModalVisible(false);
               fetchActiveOrders();
             } else {
@@ -212,7 +279,7 @@ const OrdersScreen = ({ navigation }) => {
     );
   };
 
-  // Helper to get item status (check if cancelled)
+  // Helper functions
   const getItemStatus = (item) => {
     if (isItemCancelled(selectedShop.shipto, item.locationNumber, item.shipperNumber, item.itemUIDNumber)) {
       return 'CAN';
@@ -220,38 +287,15 @@ const OrdersScreen = ({ navigation }) => {
     return item.orderStatusCode;
   };
 
-  // Helper to check if entire group is cancelled
   const isGroupCancelled = (group) => {
     return isItemCancelled(selectedShop.shipto, group.locationNumber, group.shipperNumber, -1);
   };
 
-  // Helper to format price
-  const formatPrice = (value) => {
-    if (value == null || value === '') return '';
-    const num = Number(value);
-    if (isNaN(num)) return value;
-    return `$${num.toFixed(2)}`;
-  };
-
-  // Helper to format date
-  const formatDeparture = (dateString) => {
-    if (!dateString) return '';
-    try {
-      const date = new Date(dateString);
-      return format(date, 'dd-MMM-yyyy hh:mm:ss a');
-    } catch {
-      return dateString;
-    }
-  };
-
-  // Show item details modal
   const showItemDetails = (item, groupItems = null) => {
     setSelectedItem(item);
     setItemModalVisible(true);
-    // Set pressed state for visual feedback
     const itemKey = `${item.locationNumber}-${item.shipperNumber}-${item.itemUIDNumber}`;
     setPressedItemKey(itemKey);
-    // For modal navigation
     if (groupItems) {
       setSelectedGroupItems(groupItems);
       setSelectedGroupIndex(groupItems.findIndex(i => i.itemUIDNumber === item.itemUIDNumber));
@@ -261,7 +305,6 @@ const OrdersScreen = ({ navigation }) => {
     }
   };
 
-  // Handler for modal navigation
   const handleModalNav = (direction) => {
     if (!selectedGroupItems.length) return;
     let newIndex = selectedGroupIndex + direction;
@@ -269,772 +312,333 @@ const OrdersScreen = ({ navigation }) => {
     const newItem = selectedGroupItems[newIndex];
     setSelectedItem(newItem);
     setSelectedGroupIndex(newIndex);
-    // Update pressed row in list
     const itemKey = `${newItem.locationNumber}-${newItem.shipperNumber}-${newItem.itemUIDNumber}`;
     setPressedItemKey(itemKey);
   };
 
-  // Search functionality for Active Orders
-  const searchActiveOrders = (term) => {
-    if (!term.trim()) {
-      setFilteredActiveOrders(activeOrders);
-      return;
-    }
-    
-    const filtered = activeOrders.filter(item => {
-      const searchLower = term.toLowerCase();
-      const matches = (
-        String(item.locationNumber || '').toLowerCase().includes(searchLower) ||
-        String(item.shipperNumber || '').toLowerCase().includes(searchLower) ||
-        String(item.customerPONumber || '').toLowerCase().includes(searchLower) ||
-        String(item.partDescription || '').toLowerCase().includes(searchLower) ||
-        String(item.shipQuantity || '').toLowerCase().includes(searchLower) ||
-        String(item.totalPrice || '').toLowerCase().includes(searchLower) ||
-        String(item.unitPrice || '').toLowerCase().includes(searchLower) ||
-        String(item.departureDateTime || '').toLowerCase().includes(searchLower) ||
-        String(item.callerName || '').toLowerCase().includes(searchLower) ||
-        String(item.lineItemPoNumber || '').toLowerCase().includes(searchLower)
-      );
-      
-      // if (matches) {
-      //   console.log('Active Orders - Item matched search:', {
-      //     searchTerm: term,
-      //     item: item,
-      //     matchedFields: {
-      //       locationNumber: String(item.locationNumber || '').toLowerCase().includes(searchLower),
-      //       shipperNumber: String(item.shipperNumber || '').toLowerCase().includes(searchLower),
-      //       customerPONumber: String(item.customerPONumber || '').toLowerCase().includes(searchLower),
-      //       partDescription: String(item.partDescription || '').toLowerCase().includes(searchLower),
-      //       shipQuantity: String(item.shipQuantity || '').toLowerCase().includes(searchLower),
-      //       totalPrice: String(item.totalPrice || '').toLowerCase().includes(searchLower),
-      //       unitPrice: String(item.unitPrice || '').toLowerCase().includes(searchLower),
-      //       departureDateTime: String(item.departureDateTime || '').toLowerCase().includes(searchLower),
-      //       callerName: String(item.callerName || '').toLowerCase().includes(searchLower),
-      //       lineItemPoNumber: String(item.lineItemPoNumber || '').toLowerCase().includes(searchLower),
-      //       orderStatusCode: String(item.orderStatusCode || '').toLowerCase().includes(searchLower)
-      //     }
-      //   });
-      // }
-      
-      return matches;
-    });
-    setFilteredActiveOrders(filtered);
-  };
-
-  // Search functionality for Active Returns
-  const searchActiveReturns = (term) => {
-    if (!term.trim()) {
-      setFilteredActiveReturns(activeReturns);
-      return;
-    }
-    
-    const filtered = activeReturns.filter(item => {
-      const searchLower = term.toLowerCase();
-      const matches = (
-        String(item.locationNumber || '').toLowerCase().includes(searchLower) ||
-        String(item.shipperNumber || '').toLowerCase().includes(searchLower) ||
-        String(item.customerPONumber || '').toLowerCase().includes(searchLower) ||
-        String(item.partDescription || '').toLowerCase().includes(searchLower) ||
-        String(item.shipQuantity || '').toLowerCase().includes(searchLower) ||
-        String(item.orderType || '').toLowerCase().includes(searchLower) ||
-        String(item.customerItemPONumber || '').toLowerCase().includes(searchLower) ||
-        String(item.purchaseLocationNumber || '').toLowerCase().includes(searchLower) ||
-        String(item.purchaseShipperNumber || '').toLowerCase().includes(searchLower) ||
-        String(item.callerName || '').toLowerCase().includes(searchLower)
-      );
-      
-      // if (matches) {
-      //   console.log('Active Returns - Item matched search:', {
-      //     searchTerm: term,
-      //     item: item,
-      //     matchedFields: {
-      //       locationNumber: String(item.locationNumber || '').toLowerCase().includes(searchLower),
-      //       shipperNumber: String(item.shipperNumber || '').toLowerCase().includes(searchLower),
-      //       customerPONumber: String(item.customerPONumber || '').toLowerCase().includes(searchLower),
-      //       partDescription: String(item.partDescription || '').toLowerCase().includes(searchLower),
-      //       shipQuantity: String(item.shipQuantity || '').toLowerCase().includes(searchLower),
-      //       orderType: String(item.orderType || '').toLowerCase().includes(searchLower),
-      //       customerItemPONumber: String(item.customerItemPONumber || '').toLowerCase().includes(searchLower),
-      //       purchaseLocationNumber: String(item.purchaseLocationNumber || '').toLowerCase().includes(searchLower),
-      //       purchaseShipperNumber: String(item.purchaseShipperNumber || '').toLowerCase().includes(searchLower),
-      //       callerName: String(item.callerName || '').toLowerCase().includes(searchLower)
-      //     }
-      //   });
-      // }
-      
-      return matches;
-    });
-    setFilteredActiveReturns(filtered);
-  };
-
-  // Update filtered data when main data changes
-  React.useEffect(() => {
-    setFilteredActiveOrders(activeOrders);
-  }, [activeOrders]);
-
-  React.useEffect(() => {
-    setFilteredActiveReturns(activeReturns);
-  }, [activeReturns]);
-
-  // Handle search mode toggle
+  // Search functions
   const toggleSearchMode = () => {
     setIsSearchMode(!isSearchMode);
     if (isSearchMode) {
-      // Cancel search
       setSearchTerm('');
-      if (currentView === 'activeOrders') {
-        setFilteredActiveOrders(activeOrders);
-      } else if (currentView === 'activeReturns') {
-        setFilteredActiveReturns(activeReturns);
-      }
     }
   };
 
-  // Handle search text change
   const handleSearchChange = (text) => {
-    if (currentView === 'activeOrders') {
-      searchActiveOrders(text);
-    } else if (currentView === 'activeReturns') {
-      searchActiveReturns(text);
+    setSearchTerm(text);
+  };
+
+  const handleOrderHistorySearchModeChange = (mode) => {
+    setOrderHistorySearchMode(mode);
+    if (mode === 'date') {
+      fetchOrderHistory();
     }
   };
 
-  // Active Orders UI
+  // Return Cart handlers
+  const handleAddToReturnCart = (order) => {
+    const isAlreadyInCart = returnCartItems.some(item => item.id === order.id);
+    if (!isAlreadyInCart) {
+      setReturnCartItems([...returnCartItems, order]);
+    }
+  };
+
+  const handleRemoveFromReturnCart = (order) => {
+    setReturnCartItems(returnCartItems.filter(item => item.id !== order.id));
+  };
+
+  const handleCreateReturn = () => {
+    Alert.alert(
+      'Create Return',
+      `Create return for ${returnCartItems.length} order(s)?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Create', onPress: () => {
+          console.log('Creating return for:', returnCartItems);
+          setReturnCartItems([]);
+          setReturnCartVisible(false);
+        } },
+      ]
+    );
+  };
+
+  // Order History search functionality
+  const handleOrderHistorySearch = async (searchParams) => {
+    if (!selectedShop?.shipto) return;
+    setOrderHistorySearchParams(searchParams); // Save last-used params
+    setSearchingOrderHistory(true);
+    setOrderHistorySearchModalVisible(false);
+    
+    try {
+      const data = await orderHistoryRepo.searchOrderHistory(selectedShop.shipto, searchParams);
+      console.log(`✅ [OrdersScreen] Search results: ${data.history?.length || 0} orders`);
+      setOrderHistory(data.history || []);
+      setOrderHistoryLoaded(true);
+    } catch (e) {
+      console.error(`❌ [OrdersScreen] Failed to search order history:`, e.message);
+      Alert.alert('Search Failed', 'Failed to search order history. Please try again.');
+    } finally {
+      setSearchingOrderHistory(false);
+    }
+  };
+
+  const handleOpenOrderHistorySearch = () => {
+    setOrderHistorySearchModalVisible(true);
+  };
+
+  // Get filtered data based on search
+  const getFilteredData = (data, searchFunction) => {
+    if (!isSearchMode || !searchTerm.trim()) {
+      return data;
+    }
+    return searchFunction(data, searchTerm);
+  };
+
+  // Get filtered order history data
+  const getFilteredOrderHistory = () => {
+    if (!isSearchMode || !searchTerm.trim()) {
+      return orderHistory;
+    }
+    return searchOrderHistory(orderHistory, searchTerm);
+  };
+
+  // UI Components
   const renderActiveOrders = () => {
-    const groups = groupActiveOrders(filteredActiveOrders);
+    const filteredData = getFilteredData(activeOrders, searchActiveOrders);
+    
     return (
       <>
-        <CustomHeader 
-          title={`Active Orders (${filteredActiveOrders.length})`} 
+        <OrdersHeader 
+          title={`Active Orders (${filteredData.length})`} 
+          onBackPress={() => setCurrentView('home')}
+          showSearch={true}
           showLoading={loadingActiveOrders}
           isSearchMode={isSearchMode}
           onToggleSearch={toggleSearchMode}
           onSearchChange={handleSearchChange}
+          searchPlaceholder="Search: By any field"
         />
-        <ScrollView
-          style={styles.container}
-          keyboardShouldPersistTaps="always"
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                fetchActiveOrders();
-              }}
-            />
-          }
-        >
-          <View style={styles.ordersContainer}>
-            {!loadingActiveOrders && groups.length === 0 && (
-              <Text style={{ textAlign: 'center', marginVertical: 16 }}>
-                {searchTerm ? 'No matching orders found.' : 'No active orders found.'}
-              </Text>
-            )}
-            {groups.map((group, idx) => {
-              const allOPN = group.items.every(item => getItemStatus(item) === 'OPN');
-              const groupCancelled = isGroupCancelled(group);
-              return (
-                <View key={group.locationNumber + '-' + group.shipperNumber} style={styles.groupContainer}>
-                  <View style={styles.groupHeaderCustom}>
-                    <View style={styles.groupHeaderLeft}>
-                      {allOPN && !groupCancelled && (
-                        <TouchableOpacity onPress={() => handleCancelOrder(group)} style={{ marginRight: 6 }}>
-                          <MaterialIcons name="delete" size={18} color="#525046" />
-                        </TouchableOpacity>
-                      )}
-                      <Text style={styles.groupHeaderRef}>
-                        Ref#: {group.locationNumber}-{group.shipperNumber}
-                      </Text>
-                    </View>
-                    {/* Only show PO if it has value */}
-                    {group.customerPONumber && group.customerPONumber.trim() !== ''  ? (
-                      <Text style={styles.groupHeaderPO}>
-                        PO: {group.customerPONumber}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {group.items.map(item => {
-                    const itemKey = `${item.locationNumber}-${item.shipperNumber}-${item.itemUIDNumber}`;
-                    const isPressed = pressedItemKey === itemKey;
-                    const itemStatus = getItemStatus(item);
-                    const isCancelled = itemStatus === 'CAN';
-                    return (
-                      <TouchableOpacity
-                        key={itemKey}
-                        onPress={() => showItemDetails(item, group.items)}
-                        style={[
-                          styles.itemRow,
-                          isPressed && styles.itemRowPressed,
-                          isCancelled && styles.itemRowCancelled
-                        ]}
-                      >
-                        <View style={styles.itemRowContent}>
-                          <Text style={[
-                            styles.itemPartNumber,
-                            isPressed && styles.itemPartNumberPressed,
-                            isCancelled && styles.itemPartNumberCancelled
-                          ]}>{item.partDescription}</Text>
-                          <View style={styles.itemRowRight}>
-                            <Text style={[
-                              styles.itemTotalPrice,
-                              isPressed && styles.itemTotalPricePressed,
-                              isCancelled && styles.itemTotalPriceCancelled
-                            ]}>{formatPrice(item.totalPrice)}</Text>
-                            <MaterialIcons name="chevron-right" size={20} color={isCancelled ? "#999" : "#666"} />
-                          </View>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              );
-            })}
-          </View>
-        </ScrollView>
-        
-        {/* Item Details Modal */}
-        <Modal
+        <OrdersList
+          items={filteredData}
+          loading={loadingActiveOrders}
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            setActiveOrdersLoaded(false);
+            fetchActiveOrders();
+          }}
+          onItemPress={showItemDetails}
+          onCancelOrder={handleCancelOrder}
+          onDeleteItem={handleDeleteItem}
+          pressedItemKey={pressedItemKey}
+          isActiveOrders={true}
+          formatPrice={formatPrice}
+          getItemStatus={getItemStatus}
+          isGroupCancelled={isGroupCancelled}
+          searchTerm={searchTerm}
+        />
+        <OrderItemModal
           visible={itemModalVisible}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setItemModalVisible(false)}
-        >
-          <TouchableOpacity 
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setItemModalVisible(false)}
-          >
-            <View style={styles.modalContainer}>
-              <TouchableOpacity 
-                activeOpacity={1}
-                onPress={(e) => e.stopPropagation()}
-              >
-                <View style={styles.modalHeader}>
-                  {/* Delete icon if OPN and not cancelled */}
-                  {selectedItem && getItemStatus(selectedItem) === 'OPN' && (
-                    <TouchableOpacity onPress={() => handleDeleteItem(selectedItem)}>
-                      <MaterialIcons name="delete" size={24} color="#d32f2f" />
-                    </TouchableOpacity>
-                  )}
-                  <Text style={styles.modalTitle}>
-                    Item Details
-                    {selectedGroupItems.length > 1 && (
-                      <Text style={styles.modalCounter}>  {selectedGroupIndex + 1} of {selectedGroupItems.length}</Text>
-                    )}
-                  </Text>
-                  <TouchableOpacity onPress={() => setItemModalVisible(false)}>
-                    <MaterialIcons name="close" size={24} color="#666" />
-                  </TouchableOpacity>
-                </View>
-                {selectedItem && (
-                  <ScrollView 
-                    style={styles.modalContent}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Part Description:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.partDescription}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Quantity:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.shipQuantity}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Unit Price:</Text>
-                      <Text style={styles.detailValue}>{formatPrice(selectedItem.unitPrice)}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Total Price:</Text>
-                      <Text style={styles.detailValue}>{formatPrice(selectedItem.totalPrice)}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Departure:</Text>
-                      <Text style={styles.detailValue}>{formatDeparture(selectedItem.departureDateTime)}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Caller:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.callerName}</Text>
-                    </View>
-                    {/* Only show PO Number if it has value */}
-                    {selectedItem.lineItemPoNumber && selectedItem.lineItemPoNumber.trim() !== '' ? (
-                      <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Customer Item PO Number:</Text>
-                        <Text style={styles.detailValue}>{selectedItem.lineItemPoNumber}</Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Status:</Text>
-                      <Text style={styles.detailValue}>{getItemStatus(selectedItem)}</Text>
-                    </View>
-                    
-                    {/* Navigation buttons at bottom */}
-                    {selectedGroupItems.length > 1 && (
-                      <View style={styles.modalNavigation}>
-                        <TouchableOpacity
-                          disabled={selectedGroupIndex <= 0}
-                          onPress={() => handleModalNav(-1)}
-                          style={[
-                            styles.navButton,
-                            selectedGroupIndex <= 0 && styles.navButtonDisabled
-                          ]}
-                        >
-                          <MaterialIcons name="chevron-left" size={24} color="#1976D2" />
-                          <Text style={styles.navButtonText}>Previous</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          disabled={selectedGroupIndex >= selectedGroupItems.length - 1}
-                          onPress={() => handleModalNav(1)}
-                          style={[
-                            styles.navButton,
-                            selectedGroupIndex >= selectedGroupItems.length - 1 && styles.navButtonDisabled
-                          ]}
-                        >
-                          <Text style={styles.navButtonText}>Next</Text>
-                          <MaterialIcons name="chevron-right" size={24} color="#1976D2" />
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </ScrollView>
-                )}
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
+          selectedItem={selectedItem}
+          selectedGroupItems={selectedGroupItems}
+          selectedGroupIndex={selectedGroupIndex}
+          onClose={() => setItemModalVisible(false)}
+          onDelete={handleDeleteItem}
+          onNavigate={handleModalNav}
+          isActiveOrders={true}
+          formatPrice={formatPrice}
+          formatDeparture={formatDeparture}
+          getItemStatus={getItemStatus}
+        />
       </>
     );
   };
 
-  // Active Returns UI
   const renderActiveReturns = () => {
-    const groups = groupActiveReturns(filteredActiveReturns);
+    const filteredData = getFilteredData(activeReturns, searchActiveReturns);
+    
     return (
       <>
-        <CustomHeader 
-          title={`Active Returns (${filteredActiveReturns.length})`} 
+        <OrdersHeader 
+          title={`Active Returns (${filteredData.length})`} 
+          onBackPress={() => setCurrentView('home')}
+          showSearch={true}
           showLoading={loadingActiveReturns}
           isSearchMode={isSearchMode}
           onToggleSearch={toggleSearchMode}
           onSearchChange={handleSearchChange}
+          searchPlaceholder="Search: By any field"
         />
-        <ScrollView
-          style={styles.container}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                fetchActiveReturns();
-              }}
-            />
-          }
-        >
-          <View style={styles.ordersContainer}>
-            {!loadingActiveReturns && groups.length === 0 && (
-              <Text style={{ textAlign: 'center', marginVertical: 16 }}>
-                {searchTerm ? 'No matching returns found.' : 'No active returns found.'}
-              </Text>
-            )}
-            {groups.map((group, idx) => {
-              return (
-                <View key={group.locationNumber + '-' + group.shipperNumber} style={styles.groupContainer}>
-                  <View style={styles.groupHeaderCustom}>
-                    <View style={styles.groupHeaderLeft}>
-                      <Text style={styles.groupHeaderRef}>
-                        Ref: {group.locationNumber}-{group.shipperNumber}
-                      </Text>
-                    </View>
-                    {/* Only show PO if it has value */}
-                    {group.customerPONumber && group.customerPONumber.trim() !== '' ? (
-                      <Text style={styles.groupHeaderPO}>
-                        PO: {group.customerPONumber}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {group.items.map(item => {
-                    const itemKey = `${item.locationNumber}-${item.shipperNumber}-${item.itemUIDNumber}`;
-                    const isPressed = pressedItemKey === itemKey;
-                    return (
-                      <TouchableOpacity
-                        key={itemKey}
-                        onPress={() => showItemDetails(item, group.items)}
-                        style={[
-                          styles.itemRow,
-                          isPressed && styles.itemRowPressed
-                        ]}
-                      >
-                        <View style={styles.itemRowContent}>
-                          <Text style={[
-                            styles.itemPartNumber,
-                            isPressed && styles.itemPartNumberPressed
-                          ]}>{item.partDescription}</Text>
-                          <View style={styles.itemRowRight}>
-                            <Text style={[
-                              styles.itemTotalPrice,
-                              isPressed && styles.itemTotalPricePressed
-                            ]}>{item.orderType}</Text>
-                            <MaterialIcons name="chevron-right" size={20} color="#666" />
-                          </View>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              );
-            })}
-          </View>
-        </ScrollView>
-        
-        {/* Item Details Modal */}
-        <Modal
+        <OrdersList
+          items={filteredData}
+          loading={loadingActiveReturns}
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            setActiveReturnsLoaded(false);
+            fetchActiveReturns();
+          }}
+          onItemPress={showItemDetails}
+          onCancelOrder={null}
+          onDeleteItem={null}
+          pressedItemKey={pressedItemKey}
+          isActiveOrders={false}
+          formatPrice={formatPrice}
+          getItemStatus={getItemStatus}
+          isGroupCancelled={isGroupCancelled}
+          searchTerm={searchTerm}
+        />
+        <OrderItemModal
           visible={itemModalVisible}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setItemModalVisible(false)}
-        >
-          <TouchableOpacity 
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setItemModalVisible(false)}
-          >
-            <View style={styles.modalContainer}>
-              <TouchableOpacity 
-                activeOpacity={1}
-                onPress={(e) => e.stopPropagation()}
-              >
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>
-                    Item Details
-                    {selectedGroupItems.length > 1 && (
-                      <Text style={styles.modalCounter}>  {selectedGroupIndex + 1} of {selectedGroupItems.length}</Text>
-                    )}
-                  </Text>
-                  <TouchableOpacity onPress={() => setItemModalVisible(false)}>
-                    <MaterialIcons name="close" size={24} color="#666" />
-                  </TouchableOpacity>
-                </View>
-                {selectedItem && (
-                  <ScrollView 
-                    style={styles.modalContent}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Part Description:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.partDescription}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Ship Quantity:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.shipQuantity}</Text>
-                    </View>
-                    {selectedItem.customerItemPONumber && selectedItem.customerItemPONumber.trim() !== '' ? (
-                      <View style={styles.detailRow}>
-                        <Text style={styles.detailLabel}>Customer Item PO Number:</Text>
-                        <Text style={styles.detailValue}>{selectedItem.customerItemPONumber}</Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Purchase Location Number:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.purchaseLocationNumber}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Purchase Shipper Number:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.purchaseShipperNumber}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Caller Name:</Text>
-                      <Text style={styles.detailValue}>{selectedItem.callerName}</Text>
-                    </View>
-                    
-                    {/* Navigation buttons at bottom */}
-                    {selectedGroupItems.length > 1 && (
-                      <View style={styles.modalNavigation}>
-                        <TouchableOpacity
-                          disabled={selectedGroupIndex <= 0}
-                          onPress={() => handleModalNav(-1)}
-                          style={[
-                            styles.navButton,
-                            selectedGroupIndex <= 0 && styles.navButtonDisabled
-                          ]}
-                        >
-                          <MaterialIcons name="chevron-left" size={24} color="#1976D2" />
-                          <Text style={styles.navButtonText}>Previous</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          disabled={selectedGroupIndex >= selectedGroupItems.length - 1}
-                          onPress={() => handleModalNav(1)}
-                          style={[
-                            styles.navButton,
-                            selectedGroupIndex >= selectedGroupItems.length - 1 && styles.navButtonDisabled
-                          ]}
-                        >
-                          <Text style={styles.navButtonText}>Next</Text>
-                          <MaterialIcons name="chevron-right" size={24} color="#1976D2" />
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  </ScrollView>
-                )}
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </Modal>
+          selectedItem={selectedItem}
+          selectedGroupItems={selectedGroupItems}
+          selectedGroupIndex={selectedGroupIndex}
+          onClose={() => setItemModalVisible(false)}
+          onDelete={null}
+          onNavigate={handleModalNav}
+          isActiveOrders={false}
+          formatPrice={formatPrice}
+          formatDeparture={formatDeparture}
+          getItemStatus={getItemStatus}
+        />
       </>
     );
   };
 
-  // Mock data
-  const mockActiveOrders = [
-    {
-      id: 1,
-      orderNumber: 'ORD-2024-001',
-      date: '2024-01-15',
-      status: 'Processing',
-      total: '$599.99',
-      items: 3,
-    },
-    {
-      id: 2,
-      orderNumber: 'ORD-2024-002',
-      date: '2024-01-14',
-      status: 'Shipped',
-      total: '$299.99',
-      items: 2,
-    },
-  ];
-
-  const mockActiveReturns = [
-    {
-      id: 1,
-      returnNumber: 'RET-2024-001',
-      date: '2024-01-10',
-      status: 'Pending',
-      reason: 'Wrong size',
-    },
-  ];
-
-  const mockOrderHistory = [
-    {
-      id: 1,
-      orderNumber: 'ORD-2023-001',
-      date: '2023-12-20',
-      status: 'Delivered',
-      total: '$199.99',
-      items: 1,
-    },
-    {
-      id: 2,
-      orderNumber: 'ORD-2023-002',
-      date: '2023-12-15',
-      status: 'Delivered',
-      total: '$399.99',
-      items: 2,
-    },
-  ];
-
-  // Custom header with back button and search
-  const CustomHeader = useCallback(({ title, showLoading = false, isSearchMode = false, onToggleSearch = () => {}, onSearchChange = () => {} }) => {
-    const [localSearchTerm, setLocalSearchTerm] = useState('');
-    
-    // Handle local search change
-    const handleLocalSearchChange = (text) => {
-      setLocalSearchTerm(text);
-      onSearchChange(text);
-    };
-
-    // Handle toggle search mode
-    const handleToggleSearch = () => {
-      if (isSearchMode) {
-        setLocalSearchTerm('');
-        onSearchChange('');
-      }
-      onToggleSearch();
-    };
-
-    return (
-      <View style={styles.customTopBar}>
-        {!isSearchMode ? (
-          <>
-            <IconButton
-              icon="arrow-left"
-              iconColor="black"
-              size={28}
-              onPress={() => setCurrentView('home')}
-            />
-            <View style={styles.headerTitleContainer}>
-              <Text style={styles.headerTitle}>{title}</Text>
-              {showLoading && (
-                <ActivityIndicator size="small" color="#1976D2" style={styles.headerLoader} />
-              )}
-            </View>
-            <TouchableOpacity onPress={handleToggleSearch} style={styles.searchIconContainer}>
-              <MaterialIcons name="search" size={24} color="#666" />
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <View style={styles.searchContainer}>
-              <Searchbar
-                placeholder={currentView === 'activeOrders' 
-                  ? "Search: By any field"
-                  : "Search: By any field"
-                }
-                value={localSearchTerm}
-                onChangeText={handleLocalSearchChange}
-                style={styles.headerSearchInput}
-                autoFocus={true}
-                icon="magnify"
-                onIconPress={() => {}}
-              />
-            </View>
-            <TouchableOpacity onPress={handleToggleSearch} style={styles.cancelButton}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </>
-        )}
-      </View>
-    );
-  }, [currentView]);
-
-  // Main menu list
-  const renderHome = () => (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Orders & Returns</Text>
-      </View>
-      <Card style={styles.card}>
-        <Card.Content>
-          <List.Item
-            title="Active Orders"
-            left={props => <List.Icon {...props} icon="package-variant" />}
-            right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={() => setCurrentView('activeOrders')}
-          />
-          <Divider />
-          <List.Item
-            title="Active Returns"
-            left={props => <List.Icon {...props} icon="backup-restore" />}
-            right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={() => setCurrentView('activeReturns')}
-          />
-          <Divider />
-          <List.Item
-            title="Order History"
-            left={props => <List.Icon {...props} icon="history" />}
-            right={props => <List.Icon {...props} icon="chevron-right" />}
-            onPress={() => setCurrentView('orderHistory')}
-          />
-        </Card.Content>
-      </Card>
-    </ScrollView>
-  );
-
-  // Orders/Returns/History views
-  const renderOrdersList = (type) => {
-    let orders = [];
-    let title = '';
-    if (type === 'activeOrders') {
-      orders = mockActiveOrders;
-      title = 'Active Orders';
-    } else if (type === 'activeReturns') {
-      orders = mockActiveReturns;
-      title = 'Active Returns';
-    } else if (type === 'orderHistory') {
-      orders = mockOrderHistory;
-      title = 'Order History';
-    }
+  const renderOrderHistory = () => {
     return (
       <>
-        <CustomHeader title={title} />
-        <ScrollView style={styles.container}>
-          <View style={styles.ordersContainer}>
-            <Text style={styles.sectionTitle}>{title}</Text>
-            {/* Example: show search state for order history */}
-            {type === 'orderHistory' && (
-              <View style={styles.searchState}>
-                <Text style={styles.searchLabel}>Start: {orderHistorySearch.startDate}</Text>
-                <Text style={styles.searchLabel}>End: {orderHistorySearch.endDate}</Text>
-              </View>
-            )}
-            {orders.map((order) => (
-              <Card key={order.id} style={styles.orderCard}>
-                <Card.Content>
-                  <View style={styles.orderHeader}>
-                    <Text style={styles.orderNumber}>
-                      {type === 'activeReturns' ? order.returnNumber : order.orderNumber}
-                    </Text>
-                    <Chip
-                      mode="outlined"
-                      style={[
-                        styles.statusChip,
-                        { backgroundColor: getStatusColor(order.status) }
-                      ]}
-                    >
-                      {order.status}
-                    </Chip>
-                  </View>
-                  <Text style={styles.orderDate}>Date: {order.date}</Text>
-                  {type !== 'activeReturns' && (
-                    <>
-                      <Text style={styles.orderTotal}>Total: {order.total}</Text>
-                      <Text style={styles.orderItems}>Items: {order.items}</Text>
-                    </>
-                  )}
-                  {type === 'activeReturns' && (
-                    <Text style={styles.returnReason}>Reason: {order.reason}</Text>
-                  )}
-                  <View style={styles.orderActions}>
-                    <Button
-                      mode="outlined"
-                      compact
-                      onPress={() => navigation.navigate('OrderDetails', { order })}
-                      style={styles.actionButton}
-                    >
-                      View Details
-                    </Button>
-                    {type === 'activeOrders' && (
-                      <Button
-                        mode="outlined"
-                        compact
-                        onPress={() => console.log('Track order')}
-                        style={styles.actionButton}
-                      >
-                        Track
-                      </Button>
-                    )}
-                  </View>
-                </Card.Content>
-              </Card>
-            ))}
-          </View>
-        </ScrollView>
+        <OrdersHeader 
+          title={`Order History (${orderHistory.length})`} 
+          onBackPress={() => setCurrentView('home')}
+          showSearch={true}
+          showServerSearch={true}
+          showLoading={loadingOrderHistory || searchingOrderHistory}
+          isSearchMode={isSearchMode}
+          onToggleSearch={toggleSearchMode}
+          onSearchChange={handleSearchChange}
+          onServerSearch={handleOpenOrderHistorySearch}
+          searchPlaceholder="Search: Order Number, Date, Status, Total, Items"
+        />
+        {orderHistoryLoaded && orderHistory.length > 0 ? (
+          <OrderHistoryList
+            orders={getFilteredOrderHistory()}
+            loading={loadingOrderHistory}
+            refreshing={refreshing}
+            onRefresh={() => {
+              setRefreshing(true);
+              setOrderHistoryLoaded(false);
+              // Do not auto-fetch; user must search again
+            }}
+            onOrderPress={(order) => {
+              console.log('View order details:', order);
+            }}
+            onAddToReturnCart={handleAddToReturnCart}
+            returnCartItems={returnCartItems}
+            searchTerm={searchTerm}
+            searchMode={orderHistorySearchMode}
+            formatPrice={formatPrice}
+            getStatusColor={getStatusColor}
+          />
+        ) : null}
+        <ReturnCart
+          returnCartItems={returnCartItems}
+          onRemoveFromCart={handleRemoveFromReturnCart}
+          onCreateReturn={handleCreateReturn}
+          onClose={() => setReturnCartVisible(false)}
+          visible={returnCartVisible}
+          formatPrice={formatPrice}
+        />
+        {returnCartItems.length > 0 && !returnCartVisible && (
+          <TouchableOpacity 
+            style={styles.returnCartToggle}
+            onPress={() => setReturnCartVisible(true)}
+          >
+            <MaterialIcons name="shopping-cart" size={24} color="white" />
+            <Text style={styles.returnCartToggleText}>{returnCartItems.length}</Text>
+          </TouchableOpacity>
+        )}
+        <OrderHistorySearchModal
+          visible={orderHistorySearchModalVisible}
+          onDismiss={() => setOrderHistorySearchModalVisible(false)}
+          onSearch={handleOrderHistorySearch}
+          loading={searchingOrderHistory}
+          initialSearchParams={orderHistorySearchParams}
+        />
       </>
+    );
+  };
+
+  const renderHome = () => {
+    
+    return (
+      <ScrollView style={styles.container}>
+        <OrdersHeader 
+          title="Orders & Returns"
+          onBackPress={() => navigation.goBack()} 
+          showSearch={false}
+                />
+        <Card style={styles.card}>
+          <Card.Content>
+            <List.Item
+              title="Active Orders"
+              left={props => <List.Icon {...props} icon="package-variant" />}
+              right={props => <List.Icon {...props} icon="chevron-right" />}
+              onPress={() => {
+                setCurrentView('activeOrders');
+                setTimeout(() => loadActiveOrders(), 0);
+              }}
+            />
+            <Divider />
+            <List.Item
+              title="Active Returns"
+              left={props => <List.Icon {...props} icon="backup-restore" />}
+              right={props => <List.Icon {...props} icon="chevron-right" />}
+              onPress={() => {
+                setCurrentView('activeReturns');
+                setTimeout(() => loadActiveReturns(), 0);
+              }}
+            />
+            <Divider />
+            <List.Item
+              title="Order History"
+              left={props => <List.Icon {...props} icon="history" />}
+              right={props => <List.Icon {...props} icon="chevron-right" />}
+              onPress={() => {
+                setCurrentView('orderHistory');
+                // Do not loadOrderHistory automatically here
+              }}
+            />
+          </Card.Content>
+        </Card>
+      </ScrollView>
     );
   };
 
   const getStatusColor = (status) => {
     switch (status?.toLowerCase()) {
-      case 'processing':
-        return '#FFF3E0';
-      case 'shipped':
-        return '#E3F2FD';
-      case 'delivered':
-        return '#E8F5E8';
-      case 'pending':
-        return '#FFF8E1';
-      default:
-        return '#F5F5F5';
+      case 'processing': return '#FFF3E0';
+      case 'shipped': return '#E3F2FD';
+      case 'delivered': return '#E8F5E8';
+      case 'pending': return '#FFF8E1';
+      default: return '#F5F5F5';
     }
   };
 
-  // Handler for shop selection
   const handleShopSelect = async (shop) => {
-    await updateSelectedShop(shop);
+    await selectShopAndNavigateHome(shop, navigation);
     setShopModalVisible(false);
-    navigation.navigate('Home');
   };
 
+  // Show search modal on first entry to Order History if not loaded or empty
+  useEffect(() => {
+    if (currentView === 'orderHistory' && (!orderHistoryLoaded || orderHistory.length === 0)) {
+      setOrderHistorySearchModalVisible(true);
+    }
+  }, [currentView, orderHistoryLoaded, orderHistory.length]);
+
   return (
-    <Layout
+    <Layout 
       navigation={navigation}
       currentRoute="Orders"
       onOpenShopModal={() => setShopModalVisible(true)}
@@ -1044,15 +648,17 @@ const OrdersScreen = ({ navigation }) => {
         }
       }}
     >
-      {currentView === 'home' && renderHome()}
-      {currentView === 'activeOrders' && renderActiveOrders()}
-      {currentView === 'activeReturns' && renderActiveReturns()}
-      {currentView === 'orderHistory' && renderOrdersList('orderHistory')}
-      <ShopSelectorModal
-        visible={shopModalVisible}
-        onDismiss={() => setShopModalVisible(false)}
-        onSelect={handleShopSelect}
-      />
+      <>
+        {currentView === 'home' && renderHome()}
+        {currentView === 'activeOrders' && renderActiveOrders()}
+        {currentView === 'activeReturns' && renderActiveReturns()}
+        {currentView === 'orderHistory' && renderOrderHistory()}
+        <ShopSelectorModal
+          visible={shopModalVisible}
+          onDismiss={() => setShopModalVisible(false)}
+          onSelect={handleShopSelect}
+        />
+      </>
     </Layout>
   );
 };
@@ -1062,373 +668,39 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  header: {
-    padding: 16,
-    
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
   card: {
     margin: 16,
     marginTop: 8,
   },
-  ordersContainer: {
-    padding: 6,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    color: '#333',
-  },
-  orderCard: {
-    marginBottom: 12,
-  },
-  orderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  orderNumber: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  statusChip: {
-    height: 24,
-  },
-  orderDate: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  orderTotal: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  orderItems: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
-  },
-  returnReason: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
-  },
-  orderActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    gap: 8,
-  },
-  actionButton: {
-    marginRight: 8,
-  },
-  customTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: 8,
-    paddingBottom: 8,
-    paddingHorizontal: 8,
-    
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  headerTitleContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    textAlign: 'center',
-  },
-  headerLoader: {
-    marginLeft: 8,
-  },
-  searchState: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-    backgroundColor: '#E3F2FD',
-    padding: 8,
-    borderRadius: 8,
-  },
-  searchLabel: {
-    fontSize: 13,
-    color: '#1976D2',
-  },
-  groupContainer: {
-    marginBottom: 18,
-    
-    elevation: 1,
-  },
-  groupHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-    paddingHorizontal: 4,
-  },
-  groupHeaderText: {
-    fontWeight: 'bold',
-    fontSize: 15,
-    color: '#1976D2',
-    flex: 1,
-    marginRight: 8,
-  },
-  itemRowHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 2,
-  },
-  partDescription: {
-    fontWeight: 'bold',
-    fontSize: 15,
-    color: '#333',
-    flex: 1,
-    marginRight: 8,
-  },
-  itemRowText: {
-    fontSize: 13,
-    color: '#444',
-    marginBottom: 2,
-  },
-  groupHeaderCustom: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#cfe2ff',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderTopLeftRadius: 6,
-    borderTopRightRadius: 6,
-    marginBottom: 2,
-    
-  },
-  groupHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    minWidth: 0,
-  },
-  groupHeaderRef: {
-    color: '#525046',
-    fontWeight: 'bold',
-    fontSize: 14,
-    lineHeight: 24,
-    flexShrink: 1,
-  },
-  groupHeaderPO: {
-    color: '#525046',
-    fontWeight: 'bold',
-    fontSize: 14,
-    lineHeight: 24,
-    marginLeft: 12,
-    flexShrink: 0,
-  },
-  itemRowPriceLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 2,
-    gap: 8,
-  },
-  itemRow: {
-    backgroundColor: 'white',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-    paddingHorizontal: 4,
-  },
-  itemRowPressed: {
-    backgroundColor: '#f0f8ff',
-  },
-  itemRowCancelled: {
-    borderBottomColor: '#ffcdd2', // Red border for cancelled items
-    borderBottomWidth: 3,
-    opacity: 0.9, // Gray out the text
-  },
-  itemRowContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-  },
-  itemPartNumber: {
-    fontSize: 15,
-    color: '#333',
-    flex: 1,
-    marginRight: 8,
-  },
-  itemPartNumberPressed: {
-    fontWeight: 'bold',
-  },
-  itemPartNumberCancelled: {
-    textDecorationLine: 'line-through',
-    color: '#999',
-  },
-  itemRowRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  itemTotalPrice: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#1976D2',
-  },
-  itemTotalPricePressed: {
-    fontWeight: 'bold',
-  },
-  itemTotalPriceCancelled: {
-    textDecorationLine: 'line-through',
-    color: '#999',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  returnCartToggle: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    backgroundColor: '#4CAF50',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  modalContainer: {
-    backgroundColor: 'white',
-    borderRadius: 8,
-    width: '95%',
-    maxHeight: '80%',
-    elevation: 5,
+    elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 3.84,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    flex: 1,
-    textAlign: 'center',
-  },
-  modalCounter: {
-    fontSize: 14,
-    color: '#1976D2',
-    fontWeight: 'normal',
-  },
-  modalContent: {
-    padding: 16,
-  },
-  detailRow: {
-    marginBottom: 16,
-  },
-  detailLabel: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#666',
-    marginBottom: 4,
-  },
-  detailValue: {
-    fontSize: 16,
-    color: '#333',
-    lineHeight: 22,
-  },
-  modalActions: {
-    marginTop: 20,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-  },
-  deleteButton: {
-    borderColor: '#d32f2f',
-  },
-  modalNavigation: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginTop: 20,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-  },
-  navButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-    backgroundColor: '#E0E0E0',
-  },
-  navButtonDisabled: {
-    opacity: 0.5,
-  },
-  navButtonText: {
-    fontSize: 14,
-    color: '#1976D2',
-    marginLeft: 8,
-  },
-  fab: {
+  returnCartToggleText: {
     position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 1,
-    backgroundColor: '#1976D2',
-  },
-  searchInput: {
-    borderWidth: 1,
-    borderColor: '#E0E0E0',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 12,
-  },
-  searchHint: {
-    fontSize: 12,
-    color: '#666',
-    fontStyle: 'italic',
+    top: -5,
+    right: -5,
+    backgroundColor: '#f44336',
+    color: 'white',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
     textAlign: 'center',
-  },
-  searchIconContainer: {
-    width: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchContainer: {
-    flex: 1,
-    marginRight: 8,
-  },
-  headerSearchInput: {
-    backgroundColor: 'white',
-    elevation: 0,
-    shadowOpacity: 0,
-    shadowRadius: 0,
-    shadowOffset: { width: 0, height: 0 },
-    borderWidth: 0,
-    borderRadius: 0,
-  },
-  cancelButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  cancelButtonText: {
-    color: '#1976D2',
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: 'bold',
+    lineHeight: 20,
   },
 });
 

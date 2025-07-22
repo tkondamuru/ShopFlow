@@ -49,7 +49,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: 'white',
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    borderTopColor: '#4ac9e3',
     paddingBottom: Platform.OS === 'android' ? 10 : 10,
     paddingTop: Platform.OS === 'android' ? 8 : 8,
   },

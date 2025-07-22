@@ -1,34 +1,4 @@
-import { API_BASE_URL } from './Repository';
-import * as SecureStore from 'expo-secure-store';
-
-// Helper function to get JWT token
-const getJwtToken = async () => {
-  return await SecureStore.getItemAsync('jwt_token');
-};
-
-// Helper function to make authenticated API calls
-const authenticatedFetch = async (url, options = {}) => {
-  const token = await getJwtToken();
-  if (!token) {
-    throw new Error('No authentication token found');
-  }
-  
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-      ...options.headers,
-    },
-  });
-  
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `API call failed: ${response.status}`);
-  }
-  
-  return response;
-};
+import { API_BASE_URL, authenticatedFetch } from './Repository';
 
 class ActiveOrdersRepository {
   constructor() {
@@ -71,6 +41,26 @@ class ActiveOrdersRepository {
     });
     const data = await response.json();
     return data;
+  }
+
+  // Get order history
+  async getOrderHistory(shipto, startDate, endDate) {
+    try {
+      const response = await authenticatedFetch(
+        `${this.baseUrl}api/orders/history?shipto=${shipto}&startDate=${startDate}&endDate=${endDate}`,
+        {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      return response;
+    } catch (error) {
+      console.error('Error fetching order history:', error);
+      throw error;
+    }
   }
 }
 
